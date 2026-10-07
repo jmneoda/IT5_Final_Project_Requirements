@@ -2,8 +2,9 @@
 
 import sqlite3
 from datetime import date
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Path, Request
 from fastapi.responses import JSONResponse
 
 from app.database import database_connection, initialize_database
@@ -52,7 +53,7 @@ def get_users():
 
 
 @app.get("/users/{user_id}")
-def get_user(user_id: int):
+def get_user(user_id: Annotated[int, Path(gt=0)]):
     result = User.get_user(user_id=user_id, database_connection=database_connection)
     return {"user": found(result, "User")}
 
@@ -67,7 +68,7 @@ def get_customers():
 
 
 @app.get("/customers/{customer_id}")
-def get_customer(customer_id: int):
+def get_customer(customer_id: Annotated[int, Path(gt=0)]):
     result = Customer.get_customer(
         customer_id=customer_id, database_connection=database_connection
     )
@@ -83,7 +84,7 @@ def create_customer(customer: CustomerInput):
 
 
 @app.put("/customer/{customer_id}")
-def edit_customer(customer_id: int, customer: CustomerInput):
+def edit_customer(customer_id: Annotated[int, Path(gt=0)], customer: CustomerInput):
     result = Customer.update_customer(
         customer_id=customer_id,
         customer_input=customer,
@@ -93,7 +94,7 @@ def edit_customer(customer_id: int, customer: CustomerInput):
 
 
 @app.delete("/customer/{customer_id}")
-def delete_customer(customer_id: int):
+def delete_customer(customer_id: Annotated[int, Path(gt=0)]):
     deleted = Customer.delete_customer(
         customer_id=customer_id, database_connection=database_connection
     )
@@ -113,7 +114,7 @@ def get_pets(customer_id: int | None = None):
 
 
 @app.get("/pets/{pet_id}")
-def get_pet(pet_id: int):
+def get_pet(pet_id: Annotated[int, Path(gt=0)]):
     result = Pet.get_pet(pet_id=pet_id, database_connection=database_connection)
     return {"pet": found(result, "Pet")}
 
@@ -125,7 +126,7 @@ def create_pet(pet: PetInput):
 
 
 @app.put("/pet/{pet_id}")
-def edit_pet(pet_id: int, pet: PetInput):
+def edit_pet(pet_id: Annotated[int, Path(gt=0)], pet: PetInput):
     result = Pet.update_pet(
         pet_id=pet_id, pet_input=pet, database_connection=database_connection
     )
@@ -133,7 +134,7 @@ def edit_pet(pet_id: int, pet: PetInput):
 
 
 @app.delete("/pet/{pet_id}")
-def delete_pet(pet_id: int):
+def delete_pet(pet_id: Annotated[int, Path(gt=0)]):
     deleted = Pet.delete_pet(pet_id=pet_id, database_connection=database_connection)
     found(deleted or None, "Pet")
     return {"message": "Pet deleted successfully"}
@@ -155,7 +156,7 @@ def get_appointments(
 
 
 @app.get("/appointments/{appointment_id}")
-def get_appointment(appointment_id: int):
+def get_appointment(appointment_id: Annotated[int, Path(gt=0)]):
     result = Appointment.get_appointment(
         appointment_id=appointment_id, database_connection=database_connection
     )
@@ -163,7 +164,7 @@ def get_appointment(appointment_id: int):
 
 
 @app.get("/appointments/{appointment_id}/history")
-def get_appointment_history(appointment_id: int):
+def get_appointment_history(appointment_id: Annotated[int, Path(gt=0)]):
     found(
         Appointment.get_appointment(
             appointment_id=appointment_id, database_connection=database_connection
@@ -184,7 +185,8 @@ def check_pet_owner(appointment: AppointmentInput):
         database_connection=database_connection,
     ):
         raise HTTPException(
-            status_code=400, detail="Pet does not exist or does not belong to this customer"
+            status_code=400,
+            detail="Pet does not exist or does not belong to this customer",
         )
 
 
@@ -198,7 +200,9 @@ def create_appointment(appointment: AppointmentInput):
 
 
 @app.put("/appointment/{appointment_id}")
-def edit_appointment(appointment_id: int, appointment: AppointmentInput):
+def edit_appointment(
+    appointment_id: Annotated[int, Path(gt=0)], appointment: AppointmentInput
+):
     check_pet_owner(appointment)
     result = Appointment.update_appointment(
         appointment_id=appointment_id,
@@ -209,7 +213,7 @@ def edit_appointment(appointment_id: int, appointment: AppointmentInput):
 
 
 @app.delete("/appointment/{appointment_id}")
-def delete_appointment(appointment_id: int):
+def delete_appointment(appointment_id: Annotated[int, Path(gt=0)]):
     deleted = Appointment.delete_appointment(
         appointment_id=appointment_id, database_connection=database_connection
     )
