@@ -468,6 +468,17 @@ class AppointmentInput(BaseModel):
     user_id: int | None = Field(default=None, gt=0)
 
 
+class StatusChangeInput(BaseModel):
+    """Fields sent to move an appointment to a new status."""
+
+    model_config = ConfigDict(
+        json_schema_extra={"examples": [{"status": "confirmed", "user_id": 3}]}
+    )
+
+    status: AppointmentStatus
+    user_id: int | None = Field(default=None, gt=0)
+
+
 class AppointmentStatusHistory(BaseModel):
     """One entry in an appointment's status log."""
 
@@ -649,6 +660,59 @@ class Appointment(BaseModel):
                 "DELETE FROM appointments WHERE id = ?", (appointment_id,)
             )
         return cursor.rowcount > 0
+
+    @staticmethod
+    def find_conflict(
+        veterinarian_id,
+        scheduled_date,
+        scheduled_time,
+        blocking_statuses,
+        database_connection,
+        exclude_id=None,
+    ):
+        """Return an appointment that already holds this vet/date/time slot, or None."""
+        placeholders = ", ".join("?" for _ in blocking_statuses)
+        query = (
+            "SELECT * FROM appointments WHERE veterinarian_id = ? "
+            "AND scheduled_date = ? AND scheduled_time = ? "
+            f"AND status IN ({placeholders})"
+        )
+        params = [
+            veterinarian_id,
+            scheduled_date.isoformat(),
+            scheduled_time.strftime("%H:%M:%S"),
+            *blocking_statuses,
+        ]
+        if exclude_id is not None:
+            query += " AND id != ?"
+            params.append(exclude_id)
+        with database_connection() as connection:
+            row = connection.execute(query + " LIMIT 1", params).fetchone()
+        return to_dict(row)
+
+    @staticmethod
+    def change_status(appointment_id, status, user_id, database_connection):
+        """Set a new status and log it in the history, as one all-or-nothing transaction."""
+        with database_connection() as connection:
+            cursor = connection.execute(
+                "UPDATE appointments SET status = ?, updated_by = ?, updated_at = ? "
+                "WHERE id = ?",
+                (status, user_id, now(), appointment_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+            connection.execute(
+                """
+                INSERT INTO appointment_status_histories
+                    (appointment_id, status, changed_by, changed_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (appointment_id, status, user_id, now()),
+            )
+            row = connection.execute(
+                "SELECT * FROM appointments WHERE id = ?", (appointment_id,)
+            ).fetchone()
+        return to_dict(row)
 
     @staticmethod
     def list_history(appointment_id, database_connection):

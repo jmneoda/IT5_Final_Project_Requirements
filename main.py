@@ -4,7 +4,7 @@ import sqlite3
 from datetime import date
 from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Path, Request
+from fastapi import FastAPI, HTTPException, Path, Query, Request
 from fastapi.responses import JSONResponse
 
 from app.database import database_connection, initialize_database
@@ -18,10 +18,13 @@ from app.models import (
     PetInput,
     Role,
     Species,
+    StatusChangeInput,
     User,
     UserInput,
     UserUpdate,
 )
+
+from app.services import AppointmentRuleError, AppointmentService
 
 # Each tag becomes a collapsible group in the /pvas page.
 tags_metadata = [
@@ -40,6 +43,15 @@ app = FastAPI(
 
 # A positive id taken from the URL, for example /customers/3
 IdPath = Annotated[int, Path(gt=0)]
+
+# Holds the appointment workflow rules (see app/services.py).
+appointment_service = AppointmentService(database_connection)
+
+
+@app.exception_handler(AppointmentRuleError)
+def handle_appointment_rule_error(request: Request, error: AppointmentRuleError):
+    """Turn a broken appointment rule into a clear HTTP error."""
+    return JSONResponse(status_code=error.status_code, content={"detail": error.message})
 
 
 @app.exception_handler(sqlite3.IntegrityError)
@@ -236,72 +248,57 @@ def get_appointments(
     return {"appointments": result}
 
 
+@app.get("/appointments/schedule", tags=["Appointments"])
+def get_vet_schedule(veterinarian_id: Annotated[int, Query(gt=0)], scheduled_date: date):
+    """Show the time slots a veterinarian already has booked on a date."""
+    result = appointment_service.schedule(
+        veterinarian_id=veterinarian_id, scheduled_date=scheduled_date
+    )
+    return {"booked": result}
+
+
 @app.get("/appointments/{appointment_id}", tags=["Appointments"])
 def get_appointment(appointment_id: IdPath):
     """Get one appointment by id."""
-    result = Appointment.get_appointment(
-        appointment_id=appointment_id, database_connection=database_connection
-    )
-    return {"appointment": found(result, "Appointment")}
+    return {"appointment": appointment_service.get(appointment_id)}
 
 
 @app.get("/appointments/{appointment_id}/history", tags=["Appointments"])
 def get_appointment_history(appointment_id: IdPath):
     """Show every status change of an appointment, oldest first."""
-    found(
-        Appointment.get_appointment(
-            appointment_id=appointment_id, database_connection=database_connection
-        ),
-        "Appointment",
-    )
-    result = Appointment.list_history(
-        appointment_id=appointment_id, database_connection=database_connection
-    )
-    return {"history": result}
-
-
-def check_pet_owner(appointment: AppointmentInput):
-    """An appointment's pet must belong to the appointment's customer."""
-    if not Appointment.pet_belongs_to_customer(
-        pet_id=appointment.pet_id,
-        customer_id=appointment.customer_id,
-        database_connection=database_connection,
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail="Pet does not exist or does not belong to this customer",
-        )
+    return {"history": appointment_service.history(appointment_id)}
 
 
 @app.post("/appointment", status_code=201, tags=["Appointments"])
 def create_appointment(appointment: AppointmentInput):
-    """Book an appointment. The pet must belong to the customer."""
-    check_pet_owner(appointment)
-    result = Appointment.create_appointment(
-        appointment_input=appointment, database_connection=database_connection
-    )
-    return {"appointment": result}
+    """Book an appointment.
+
+    Rules: it must start as scheduled or confirmed, the pet must belong to the
+    customer, and the veterinarian must be free at that date and time.
+    """
+    return {"appointment": appointment_service.book(appointment)}
 
 
 @app.put("/appointment/{appointment_id}", tags=["Appointments"])
 def edit_appointment(appointment_id: IdPath, appointment: AppointmentInput):
-    """Replace an appointment's details. A changed status is added to its history."""
-    check_pet_owner(appointment)
-    result = Appointment.update_appointment(
-        appointment_id=appointment_id,
-        appointment_input=appointment,
-        database_connection=database_connection,
-    )
-    return {"appointment": found(result, "Appointment")}
+    """Edit or reschedule an appointment. The same booking and status rules apply."""
+    return {"appointment": appointment_service.update(appointment_id, appointment)}
+
+
+@app.patch("/appointments/{appointment_id}/status", tags=["Appointments"])
+def change_appointment_status(appointment_id: IdPath, status_change: StatusChangeInput):
+    """Move an appointment to a new status and log it in its history.
+
+    Allowed: scheduled to confirmed or canceled; confirmed to completed,
+    no_show, or canceled. Completed, no_show, and canceled are final.
+    """
+    return {"appointment": appointment_service.change_status(appointment_id, status_change)}
 
 
 @app.delete("/appointment/{appointment_id}", tags=["Appointments"])
 def delete_appointment(appointment_id: IdPath):
     """Delete an appointment. Its status history is deleted too."""
-    deleted = Appointment.delete_appointment(
-        appointment_id=appointment_id, database_connection=database_connection
-    )
-    found(deleted or None, "Appointment")
+    appointment_service.delete(appointment_id)
     return {"message": "Appointment deleted successfully"}
 
 
